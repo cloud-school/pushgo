@@ -182,12 +182,12 @@ func (self *Handler) UpdateHandler(resp http.ResponseWriter, req *http.Request) 
 			mozutil.JsMap{"path": req.URL.Path})
 	}
 	if self.logger != nil {
-		self.logger.Info("update", "=========== UPDATE ====", nil)
+		self.logger.Info("update", "===== UPDATE =====", nil)
 	}
 
 	defer func() {
 		if self.logger != nil {
-			self.logger.Info("update", "+++++++++++++ DONE +++", nil)
+			self.logger.Info("update", "+++++ DONE +++++", nil)
 		}
 	}()
 	if req.Method != "PUT" {
@@ -387,6 +387,11 @@ func (self *Handler) PushSocketHandler(ws *websocket.Conn) {
 		self.logger.Debug("main", "Server for client shut-down", nil)
 	}
 }
+
+func (self *Handler) ConnectionCount() int32 {
+    return cClients
+}
+
 
 // o4fs
 // vim: set tabstab=4 softtabstop=4 shiftwidth=4 noexpandtab

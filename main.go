@@ -9,6 +9,7 @@ import (
 	"mozilla.org/simplepush"
 	storage "mozilla.org/simplepush/storage/mcstorage"
 	mozutil "mozilla.org/util"
+    "mozilla.org/limitedhttp"
 
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"syscall"
+    "strings"
 )
 
 var (
@@ -78,14 +80,17 @@ func main() {
 
 	// Register the handlers
 	// each websocket gets it's own handler.
-	http.HandleFunc("/update/", handlers.UpdateHandler)
+	limitedhttp.HandleFunc("/update/", handlers.UpdateHandler)
 	http.HandleFunc("/status/", handlers.StatusHandler)
 	http.HandleFunc("/realstatus/", handlers.RealStatusHandler)
-	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
+	limitedhttp.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Config the server
 	host := mozutil.MzGet(config, "host", "localhost")
 	port := mozutil.MzGet(config, "port", "8080")
+    if _, ok :=config["max_connections"]; !ok {
+        config["max_connections"] = 1000
+    }
 
 	// Hoist the main sail
 	if logger != nil {
@@ -99,7 +104,16 @@ func main() {
 
 	errChan := make(chan error)
 	go func() {
-		errChan <- http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
+        max_connections, err := strings.ParseInt(config["max_connections"],0,0)
+        if err != nil {
+            max_connections = 1000
+        }
+
+        //errChan <- http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), nil)
+        errChan <- limitedhttp.ListenAndServe(
+            fmt.Sprintf("%s:%s", host, port),
+            nil,
+            max_connections)
 	}()
 
 	select {
