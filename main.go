@@ -26,7 +26,7 @@ var (
 	configFile *string = flag.String("config", "config.ini", "Configuration File")
 	profile    *string = flag.String("profile", "", "Profile file output")
 	memProfile *string = flag.String("memProfile", "", "Profile file output")
-	logging    *int   = flag.Int("logging", 0, "logging level (0=none,1=critical ... 10=verbose")
+	logging    *int    = flag.Int("logging", 0, "logging level (0=none,1=critical ... 10=verbose")
 	logger     *util.HekaLogger
 	store      *storage.Storage
 	route      *router.Router
@@ -41,9 +41,9 @@ func main() {
 	config := util.MzGetConfig(*configFile)
 
 	config = simplepush.FixConfig(config)
-    config["VERSION"] = VERSION
-    log.Printf("CurrentHost: %s, Version: %s",
-        config["shard.current_host"], VERSION)
+	config["VERSION"] = VERSION
+	log.Printf("CurrentHost: %s, Version: %s",
+		config["shard.current_host"], VERSION)
 
 	if *profile != "" {
 		log.Printf("Creating profile...")
@@ -58,10 +58,10 @@ func main() {
 		pprof.StartCPUProfile(f)
 	}
 	//  Disable logging for high capacity runs
-    if *logging > 0 {
-        config["logger.enable"] = "1"
-        config["logger.filter"] = strconv.FormatInt(int64(*logging), 10)
-    }
+	if *logging > 0 {
+		config["logger.enable"] = "1"
+		config["logger.filter"] = strconv.FormatInt(int64(*logging), 10)
+	}
 	if v, ok := config["logger.enable"]; ok {
 		if v, _ := strconv.ParseBool(v.(string)); v {
 			logger = util.NewHekaLogger(config)
@@ -97,19 +97,34 @@ func main() {
 
 	// Register the handlers
 	// each websocket gets it's own handler.
-	http.HandleFunc("/update/", handlers.UpdateHandler)
-	http.HandleFunc("/status/", handlers.StatusHandler)
-	http.HandleFunc("/realstatus/", handlers.RealStatusHandler)
-	http.Handle("/", websocket.Handler(handlers.PushSocketHandler))
-
+	var wsport string
+	var wshost string
+	var WSMux *http.ServeMux = http.DefaultServeMux
+	var RESTMux *http.ServeMux = http.DefaultServeMux
 	// Config the server
 	host := util.MzGet(config, "host", "localhost")
 	port := util.MzGet(config, "port", "8080")
+
+	if util.MzGet(config, "wsport", port) != port {
+		wsport = util.MzGet(config, "wsport", port)
+		wshost = util.MzGet(config, "wshost", host)
+		WSMux = http.NewServeMux()
+	}
+
+	RESTMux.HandleFunc("/update/", handlers.UpdateHandler)
+	RESTMux.HandleFunc("/status/", handlers.StatusHandler)
+	RESTMux.HandleFunc("/realstatus/", handlers.RealStatusHandler)
+	WSMux.Handle("/", websocket.Handler(handlers.PushSocketHandler))
 
 	// Hoist the main sail
 	if logger != nil {
 		logger.Info("main",
 			fmt.Sprintf("listening on %s:%s", host, port), nil)
+		if RESTMux != WSMux {
+			logger.Info("main",
+				fmt.Sprintf("winsock listening on %s:%s", wshost, wsport),
+				nil)
+		}
 	}
 
 	var certFile string
@@ -121,22 +136,40 @@ func main() {
 		keyFile = name.(string)
 	}
 
+	log.Printf("RESTMux %v : WSMux %v", RESTMux, WSMux)
+
 	// wait for sigint
 	sigChan := make(chan os.Signal)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGHUP, SIGUSR1)
 
 	errChan := make(chan error)
 	go func() {
+		// REST port
 		addr := host + ":" + port
 		if len(certFile) > 0 && len(keyFile) > 0 {
 			if logger != nil {
 				logger.Info("main", "Using TLS", nil)
 			}
-			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, nil)
+			errChan <- http.ListenAndServeTLS(addr, certFile, keyFile, RESTMux)
 		} else {
-			errChan <- http.ListenAndServe(addr, nil)
+			errChan <- http.ListenAndServe(addr, RESTMux)
 		}
+
 	}()
+
+	if WSMux != RESTMux {
+		if logger != nil {
+			logger.Info("main", "Starting separate context for WS", nil)
+		}
+		go func() {
+            wsaddr := wshost + ":" + wsport
+			if len(certFile) > 0 && len(keyFile) > 0 {
+				errChan <- http.ListenAndServeTLS(wsaddr, certFile, keyFile, WSMux)
+			} else {
+				errChan <- http.ListenAndServe(wsaddr, WSMux)
+			}
+		}()
+	}
 
 	go route.HandleUpdates(updater)
 
